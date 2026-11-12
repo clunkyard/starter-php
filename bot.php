@@ -83,8 +83,26 @@ final class Starter extends cy\Robot {
             $climb=$zone->shape==='sphere'?$angles->elevationTo($position,$zone->center):0;
             $this->drive->set(0.8,$angles->clamp($angles->angleDiff($angles->bearingTo($position,$zone->center),$me->heading())/30),$angles->clamp(($climb-$me->pitch())/30));
         }
+        // The arena's rate calibration only; safe to delete.
+        $work=$this->raw->number('state.calibration.work');
+        if($work!==null&&$work>0)$this->status->set('WORK',calibrationWork((int)$work,$this->clock->tick()));
     }
 }
 
+// The calibration kernel, xorshift-sqrt v1: work rounds of a 64-bit xorshift
+// and a square-root sum. PHP's integers are signed and its >> is arithmetic,
+// so the masks make the right shifts logical.
+function calibrationWork(int $work, int $tick): int
+{
+    $x = 88172645463325252 ^ $tick;
+    $sum = 0.0;
+    for ($i = 0; $i < $work; $i++) {
+        $x ^= $x << 13;
+        $x ^= ($x >> 7) & 0x01FFFFFFFFFFFFFF;
+        $x ^= $x << 17;
+        $sum += sqrt(($x >> 11) & 0x001FFFFFFFFFFFFF);
+    }
+    return ((int) floor($sum) + (($x >> 40) & 0xFFFFFF)) % 1000000;
+}
 
 cy\run(new Starter());
