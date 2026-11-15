@@ -8,7 +8,8 @@
 // clock: tick seconds remaining_ticks
 // arena: size gravity terrain_kind ground_height(x y)
 // me: health position velocity heading pitch roll angular_velocity
-//   attitude grounded altitude applied
+//   attitude grounded altitude applied hull_mounts to_mount(heading pitch)
+//   from_mount(heading pitch) mount_toward(point)
 // battery: charge capacity regen sustainable_drive compute
 //   drive_cost(fraction)
 // drive: hover_lift
@@ -30,7 +31,8 @@
 // score: me best armour
 // angles: normalize(degrees) angle_diff(target current)
 //   bearing_to(from to) elevation_to(from to) direction(heading pitch)
-//   distance(a b) clamp(value low high)
+//   distance(a b) to_chassis(heading pitch attitude)
+//   from_chassis(heading pitch attitude) clamp(value low high)
 // raw: number(path) text(path) has(path) flag(path) count(path) line()
 // Controls: drive.set(throttle turn pitch_turn)
 //   drive.forces(thrust strafe lift yaw_torque pitch_torque roll_torque brake)
@@ -46,7 +48,7 @@ require 'clunkyard.php';
 use Clunkyard as cy;
 
 final class Starter extends cy\Robot {
-    private bool $free=false;
+    private bool $free=false;private int $dodges=0;private int $dodgeEnd=0;
     private function steer(float $towards,float $current):float{return $this->angles->clamp($this->angles->angleDiff($towards,$current)/45);}
     public function onStart():void{$this->free=$this->match->is3d()&&$this->arena->gravity()->z==0;}
     public function onTurn():void{
@@ -57,6 +59,7 @@ final class Starter extends cy\Robot {
             $throttle=$target->range>350?0.7:($target->range<200?-0.4:0.2);
             $this->drive->set(throttle:$throttle,turn:$this->steer($target->bearing,$me->heading()),pitchTurn:$this->steer($target->elevation,$me->pitch()));
             $scanner->set($target->bearing,20,$target->elevation);
+            // gun.lead is the intercept if the target holds course.
             $power=$gun->powerForFlightTime($target->range,1);$aim=$gun->lead($target,$power);
             $heading=$aim?->heading??$target->bearing;$pitch=$aim?->pitch??$target->elevation;
             $gun->aim($heading,$pitch);$now=$gun->aimNow();
@@ -72,6 +75,16 @@ final class Starter extends cy\Robot {
             $this->drive->set(0.5,0.33,$this->steer(0,$me->pitch()));
             $pitch=$this->free?(intdiv($this->clock->tick(),10)%3-1)*35:0;
             $scanner->set($angles->normalize($scanner->last()->heading+36),40,$pitch);$this->status->set('SEARCH');
+        }
+        // A simple dodge: vary it, or predict the shooter.
+        $tick=$this->clock->tick();
+        if($tick>=$this->dodgeEnd&&array_filter($this->sensors->cues(),fn($c)=>$c->source==='muzzle')){$this->dodges++;$this->dodgeEnd=$tick+10;}
+        if($tick<$this->dodgeEnd){
+            // Off the line of fire: left, then right next time (turn is positive left, strafe right).
+            $left=$this->dodges%2===1;
+            if($this->match->control()==='forces'){$this->drive->set(throttle:0.5);$this->drive->forces(strafe:$left?-1:1);}
+            else $this->drive->set(throttle:1,turn:$left?1:-1);
+            $this->status->set($left?'dodge:left':'dodge:right',$this->dodges);
         }
         if($this->battery->charge()<$this->battery->capacity()/4)$this->drive->set(throttle:$this->drive->get('throttle')*0.5);
         $storm=$this->nav->storm();$zone=$this->nav->zone();
